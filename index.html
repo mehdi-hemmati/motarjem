@@ -88,6 +88,8 @@ Terms: دادخواست = statement of claim; لایحه = submission / brief; �
 const $=id=>document.getElementById(id);
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 const store={get:(k,d)=>{try{return localStorage.getItem(k)??d}catch(e){return d}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+let lastFinal='',buf='',flushT=null;
+function flush(){const t=buf.trim();buf='';lastFinal='';clearInterim();if(t)translate(mode||'me',t);}
 let rec=null,mode=null,wantOn=false,speaking=false,interimEl=null;
 const hist=[];
 const log=$('log');
@@ -128,7 +130,7 @@ async function translate(kind,text){
   try{
     const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
       headers:{'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:MODEL,max_tokens:800,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:MODEL,max_tokens:800,system:'You are a translation engine inside a live interpreter app. Output ONLY the translation of the given text. Never ask questions, never comment, never explain, never refuse. If the text is short, partial or unclear, translate it as best you can anyway.',messages:[{role:'user',content:prompt}]})});
     const j=await r.json();
     if(!r.ok){o.textContent='خطا: '+(j.error?.message||r.status);return;}
     const out=(j.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
@@ -156,11 +158,11 @@ function speak(text){
 }
 
 function startRec(){
-  rec=new SR();rec.lang=mode==='me'?'fa-IR':'en-US';rec.continuous=true;rec.interimResults=true;
+  rec=new SR();rec.lang=mode==='me'?'fa-IR':'en-US';rec.continuous=false;rec.interimResults=true;
   rec.onresult=ev=>{let interim='';
     for(let i=ev.resultIndex;i<ev.results.length;i++){const r=ev.results[i];
-      if(r.isFinal){clearInterim();translate(mode,r[0].transcript);}else interim+=r[0].transcript;}
-    if(interim)showInterim(interim);};
+      if(r.isFinal){const t=r[0].transcript.trim();if(t&&t!==lastFinal){lastFinal=t;buf+=(buf?' ':'')+t;showInterim(buf);clearTimeout(flushT);flushT=setTimeout(flush,1600);}}else interim+=r[0].transcript;}
+    if(interim)showInterim((buf?buf+' ':'')+interim);if(interim)clearTimeout(flushT);};
   rec.onerror=ev=>{if(ev.error==='not-allowed'||ev.error==='service-not-allowed'){setStatus('اجازهٔ میکروفون داده نشد.');stopAll();}};
   rec.onend=()=>{if(wantOn&&!speaking){try{startRec()}catch(e){}}};
   try{rec.start()}catch(e){}
@@ -169,7 +171,7 @@ function showInterim(t){$('empty')?.remove();
   if(!interimEl){interimEl=document.createElement('div');interimEl.className='msg interim '+mode;log.append(interimEl);}
   interimEl.dir=mode==='me'?'rtl':'ltr';interimEl.textContent=t;log.scrollTop=log.scrollHeight;}
 function clearInterim(){interimEl?.remove();interimEl=null}
-function stopAll(){wantOn=false;try{rec&&rec.stop()}catch(e){}rec=null;clearInterim();
+function stopAll(){clearTimeout(flushT);if(buf.trim()){const m=mode,t=buf.trim();buf='';clearInterim();translate(m,t);}wantOn=false;try{rec&&rec.stop()}catch(e){}rec=null;clearInterim();
   $('btnMe').classList.remove('on');$('btnThem').classList.remove('on');mode=null;}
 function toggle(w){
   if(!SR){setStatus('تشخیص گفتار نیست؛ صفحه را در Chrome باز کنید.');return;}
@@ -178,7 +180,7 @@ function toggle(w){
   setStatus(w==='me'?'گوش می‌دهم (فارسی)… برای توقف دوباره بزنید.':'Listening (English)… برای توقف دوباره بزنید.');
   startRec();
 }
-$('btnMe').onclick=()=>{speechSynthesis?.getVoices();toggle('me')};
+$('btnMe').onclick=()=>{window.speechSynthesis?.getVoices();toggle('me')};
 $('btnThem').onclick=()=>toggle('them');
 $('send').onclick=()=>{const t=$('typed').value.trim();if(!t)return;$('typed').value='';
   translate(/[\u0600-\u06FF]/.test(t)?'me':'them',t);};
